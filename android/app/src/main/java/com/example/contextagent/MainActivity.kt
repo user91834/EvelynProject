@@ -349,6 +349,7 @@ class MainActivity : ComponentActivity() {
             var playingUrl by remember { mutableStateOf<String?>(null) }
             var playbackPositionMs by remember { mutableLongStateOf(0L) }
             var playbackDurationMs by remember { mutableLongStateOf(0L) }
+            var lastAutoPlayedAudioUrl by remember { mutableStateOf<String?>(null) }
 
             var currentActivity by remember { mutableStateOf("...") } // legado, pode manter por enquanto
             var currentPartOfDay by remember { mutableStateOf("...") }
@@ -378,7 +379,7 @@ class MainActivity : ComponentActivity() {
             var voiceProfilesList by remember { mutableStateOf<List<VoiceSlot>>(emptyList()) }
 
             var personalityModesScreenOpen by remember { mutableStateOf(false) }
-            var personalityModes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+            var personalityModes by remember { mutableStateOf<Map<String, Int?>>(emptyMap()) }
             var personalityModeLabels by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
             var interruptionsEnabled by remember { mutableStateOf(true) }
@@ -392,6 +393,49 @@ class MainActivity : ComponentActivity() {
                     val extra = if (assistantTyping) 1 else 0
                     listState.animateScrollToItem((messages.size - 1 + extra).coerceAtLeast(0))
                 }
+            }
+
+            // Autoplay for assistant voice messages (normal chat).
+            // Pseudo-sync already plays audio inside the foreground service.
+            LaunchedEffect(messages.size, playingUrl, pseudoSyncEnabled, allowBackgroundAudio, allowLockscreenAudio, isAppInForeground) {
+                if (pseudoSyncEnabled) return@LaunchedEffect
+                if (playingUrl != null) return@LaunchedEffect
+                if (!isAppInForeground && !allowBackgroundAudio && !allowLockscreenAudio) return@LaunchedEffect
+
+                val candidate = messages.lastOrNull { msg ->
+                    msg.role == "assistant" &&
+                        msg.modality == "voice" &&
+                        !msg.audioUrl.isNullOrBlank()
+                } ?: return@LaunchedEffect
+
+                val url = candidate.audioUrl ?: return@LaunchedEffect
+                if (url == lastAutoPlayedAudioUrl) return@LaunchedEffect
+
+                lastAutoPlayedAudioUrl = url
+                playAudio(
+                    url = url,
+                    speechMeta = candidate.speechMeta,
+                    onStarted = { duration ->
+                        playingUrl = url
+                        playbackDurationMs = duration
+                        playbackPositionMs = 0L
+                        debugText = "Playing audio (auto)"
+                    },
+                    onProgress = { position, duration ->
+                        if (playingUrl == url) {
+                            playbackPositionMs = position
+                            playbackDurationMs = duration
+                        }
+                    },
+                    onFinished = {
+                        if (playingUrl == url) {
+                            playingUrl = null
+                            playbackPositionMs = 0L
+                            playbackDurationMs = 0L
+                        }
+                    },
+                    onDebug = onDebugWithNetwork
+                )
             }
 
             LaunchedEffect(Unit) {
@@ -1731,7 +1775,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadPersonalityModes(
-        onLoaded: (Map<String, Int>, Map<String, String>) -> Unit,
+        onLoaded: (Map<String, Int?>, Map<String, String>) -> Unit,
         onDebug: (String) -> Unit
     ) {
         val req = Request.Builder()
@@ -1749,14 +1793,15 @@ class MainActivity : ComponentActivity() {
                     }
                     val modesObj = obj.optJSONObject("modes") ?: JSONObject()
                     val labelsObj = obj.optJSONObject("labels") ?: JSONObject()
-                    val modes = mutableMapOf<String, Int>()
+                    val modes = mutableMapOf<String, Int?>()
                     val labels = mutableMapOf<String, String>()
                     for (key in modesObj.keys()) {
                         val v = modesObj.opt(key)
                         modes[key] = when (v) {
+                            null -> null
+                            JSONObject.NULL -> null
                             is Number -> v.toInt().coerceIn(0, 100)
-                            null -> 0
-                            else -> 0
+                            else -> null
                         }
                     }
                     for (key in labelsObj.keys()) {
@@ -1776,12 +1821,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun savePersonalityModes(
-        newModes: Map<String, Int>,
+        newModes: Map<String, Int?>,
         onSaved: () -> Unit,
         onDebug: (String) -> Unit
     ) {
         val json = JSONObject()
-        newModes.forEach { (k, v) -> json.put(k, v) }
+        newModes.forEach { (k, v) ->
+            if (v == null) json.put(k, JSONObject.NULL) else json.put(k, v)
+        }
         val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
         val req = Request.Builder()
             .url("$baseUrl/personality_modes/$userId")

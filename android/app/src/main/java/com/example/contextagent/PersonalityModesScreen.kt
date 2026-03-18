@@ -18,17 +18,33 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val DEFAULT_MODE_ORDER = listOf(
-    "miguxes", "ego", "dependente", "implicante", "dramatica", "eletrica",
-    "arlequina", "subindo_pelas_paredes", "instavel", "tagarela", "reflexiva", "provocadora"
+    "miguxes",
+    "ego",
+    "dependente",
+    "implicante",
+    "dramatica",
+    "eletrica",
+    "arlequina",
+    "subindo_pelas_paredes",
+    "instavel",
+    "tagarela",
+    "reflexiva",
+    "provocadora"
 )
+
 private val DEFAULT_MODE_LABELS = mapOf(
     "miguxes" to "Miguxês",
     "ego" to "Ego",
@@ -46,17 +62,36 @@ private val DEFAULT_MODE_LABELS = mapOf(
 
 @Composable
 fun PersonalityModesScreen(
-    modes: Map<String, Int>,
+    modes: Map<String, Int?>,
     labels: Map<String, String>,
     onBack: () -> Unit,
-    onSave: (Map<String, Int>) -> Unit
+    onSave: (Map<String, Int?>) -> Unit
 ) {
     val order = if (modes.isEmpty() && labels.isEmpty()) DEFAULT_MODE_ORDER
-        else (modes.keys + labels.keys).distinct().sorted()
+    else (modes.keys + labels.keys).distinct().sorted()
+
     val effectiveLabels = if (labels.isEmpty()) DEFAULT_MODE_LABELS else labels
+
+    // draft[key] == null  -> "não aplicado"
+    // draft[key] != null  -> "aplicado" + intensidade 0..100
     var draft by remember(modes, order) {
-        val initial = order.associateWith { modes[it] ?: 0 }.toMutableMap()
+        val initial = order.associateWith { modes[it] }.toMutableMap()
         mutableStateOf(initial)
+    }
+
+    val scope = rememberCoroutineScope()
+    var saveJob by remember { mutableStateOf<Job?>(null) }
+
+    fun scheduleSave(snapshot: Map<String, Int?>) {
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(650)
+            onSave(snapshot)
+        }
+    }
+
+    fun scheduleSaveCurrent() {
+        scheduleSave(draft.toMap())
     }
 
     Column(
@@ -73,23 +108,37 @@ fun PersonalityModesScreen(
         ) {
             Text("Modos de personalidade", style = MaterialTheme.typography.titleLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onBack) { Text("Voltar") }
-                Button(onClick = { onSave(draft) }) { Text("Salvar") }
+                Button(onClick = {
+                    onSave(draft.toMap())
+                    onBack()
+                }) { Text("Voltar") }
             }
         }
+
         Spacer(Modifier.height(8.dp))
-        Text("0 = desligado, 100 = máximo. Afeta o estilo da fala da personagem.", style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(8.dp))
+        Text(
+            "Cada modo tem 3 estados: não aplicado, aplicado e intensidade (0–100) quando aplicado.",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { draft = order.associateWith { 0 }.toMutableMap() },
+            onClick = {
+                draft = order.associateWith { null }.toMutableMap()
+                scheduleSaveCurrent()
+            },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Resetar para neutro (todos em 0)")
+            Text("Neutro (todos não aplicados)")
         }
+
         Spacer(Modifier.height(16.dp))
+
         order.forEach { key ->
             val label = effectiveLabels[key] ?: key
-            val value = draft[key] ?: 0
+            val value = draft[key]
+            val applied = value != null
+
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -97,17 +146,58 @@ fun PersonalityModesScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(label, style = MaterialTheme.typography.titleSmall)
-                    Text("$value", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (applied) "${value}/100" else "não aplicado",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
-                Slider(
-                    value = value.toFloat().coerceIn(0f, 100f),
-                    onValueChange = { newVal ->
-                        val v = newVal.toInt().coerceIn(0, 100)
-                        draft = draft.toMutableMap().apply { put(key, v) }
-                    },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            val newVal = draft[key] ?: 50
+                            draft = draft.toMutableMap().apply { put(key, newVal) }
+                            scheduleSaveCurrent()
+                        }
+                    ) {
+                        Text(if (applied) "Aplicado ✓" else "Aplicar")
+                    }
+                    Button(
+                        onClick = {
+                            draft = draft.toMutableMap().apply { put(key, null) }
+                            scheduleSaveCurrent()
+                        }
+                    ) {
+                        Text(if (!applied) "Não aplicado ✓" else "Não aplicar")
+                    }
+                }
+
+                if (applied) {
+                    Spacer(Modifier.height(8.dp))
+                    Slider(
+                        value = (value ?: 0).toFloat().coerceIn(0f, 100f),
+                        onValueChange = { newVal ->
+                            val v = newVal.toInt().coerceIn(0, 100)
+                            draft = draft.toMutableMap().apply { put(key, v) }
+                            scheduleSaveCurrent()
+                        },
+                        valueRange = 0f..100f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Intensidade desativada",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
             }
         }
     }

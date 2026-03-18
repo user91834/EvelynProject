@@ -74,6 +74,7 @@ class VoiceCaptureForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var captureJob: Job? = null
     private val isRunning = AtomicBoolean(false)
+    private val suppressVAD = AtomicBoolean(false)
     private var mediaPlayer: MediaPlayer? = null
 
     private val circularBuffer = ByteArray(BUFFER_SIZE_BYTES)
@@ -203,6 +204,11 @@ class VoiceCaptureForegroundService : Service() {
             while (isRunning.get()) {
                 val read = rec.read(chunk, 0, chunk.size)
                 if (read <= 0) continue
+                if (suppressVAD.get()) {
+                    // While TTS playback is happening, ignore microphone frames
+                    // to prevent the assistant's own audio from triggering VAD/STT.
+                    continue
+                }
                 val actualSamples = read
                 val chunkLen = actualSamples * BYTES_PER_SAMPLE
                 ByteBuffer.allocate(chunkLen).order(ByteOrder.LITTLE_ENDIAN).apply {
@@ -233,6 +239,18 @@ class VoiceCaptureForegroundService : Service() {
             sum += v * v
         }
         return sqrt(sum / count.coerceAtLeast(1))
+    }
+
+    private fun resetVadStateAndBuffer() {
+        inSpeech = false
+        silenceFramesCount = 0
+        speechStartIndex = -1
+        speechStartTimeMs = 0
+        lastSpeechTimeMs = 0
+        synchronized(circularBuffer) {
+            java.util.Arrays.fill(circularBuffer, 0)
+            writeIndex = 0
+        }
     }
 
     private fun vadStep(rms: Double, chunkBytes: Int) {
@@ -367,6 +385,11 @@ class VoiceCaptureForegroundService : Service() {
 
     private fun playResponseAudio(url: String) {
         try {
+            // Suppress VAD/STT while the assistant audio is playing.
+            // This avoids feeding our own TTS back into the microphone pipeline.
+            suppressVAD.set(true)
+            resetVadStateAndBuffer()
+
             mediaPlayer?.release()
         } catch (_: Exception) {}
         val player = MediaPlayer().apply {
@@ -377,11 +400,15 @@ class VoiceCaptureForegroundService : Service() {
             }
             setOnCompletionListener {
                 releaseWakeLock()
+                suppressVAD.set(false)
+                resetVadStateAndBuffer()
                 it.release()
                 if (mediaPlayer === it) mediaPlayer = null
             }
             setOnErrorListener { _, _, _ ->
                 releaseWakeLock()
+                suppressVAD.set(false)
+                resetVadStateAndBuffer()
                 true
             }
             prepareAsync()

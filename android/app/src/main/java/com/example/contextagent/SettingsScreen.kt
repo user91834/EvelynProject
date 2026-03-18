@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsPanel(
@@ -85,6 +89,26 @@ fun SettingsPanel(
     val prefs = remember(context) { context.getSharedPreferences("evelyn_prefs", Context.MODE_PRIVATE) }
     var jwtToken by remember(prefs) { mutableStateOf(prefs.getString("jwt_token", "") ?: "") }
 
+    val scope = rememberCoroutineScope()
+    var deliverySaveJob by remember { mutableStateOf<Job?>(null) }
+    var autonomySaveJob by remember { mutableStateOf<Job?>(null) }
+
+    fun scheduleDeliverySave() {
+        deliverySaveJob?.cancel()
+        deliverySaveJob = scope.launch {
+            delay(600)
+            onSaveDeliveryPreferences()
+        }
+    }
+
+    fun scheduleAutonomySave() {
+        autonomySaveJob?.cancel()
+        autonomySaveJob = scope.launch {
+            delay(600)
+            onSaveAutonomy()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -98,7 +122,12 @@ fun SettingsPanel(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Conversation settings", style = MaterialTheme.typography.titleLarge)
-            Button(onClick = onClose) {
+            Button(onClick = {
+                onSaveRelationshipMode()
+                onSaveDeliveryPreferences()
+                onSaveAutonomy()
+                onClose()
+            }) {
                 Text("Back")
             }
         }
@@ -164,14 +193,13 @@ fun SettingsPanel(
         SettingsCard("Relationship mode") {
             RelationshipModeSelector(
                 selectedMode = relationshipModeDraft,
-                onModeSelected = onRelationshipModeDraftChange
+                onModeSelected = { newMode ->
+                    onRelationshipModeDraftChange(newMode)
+                    onSaveRelationshipMode()
+                }
             )
             Spacer(Modifier.height(8.dp))
             Text("Current saved mode: $relationshipMode", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveRelationshipMode) {
-                Text("Save relationship mode")
-            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -179,12 +207,24 @@ fun SettingsPanel(
         SettingsCard("Delivery preferences") {
             DeliveryModeSelector(
                 selectedMode = inactiveDeliveryModeDraft,
-                onModeSelected = onInactiveDeliveryModeDraftChange
+                onModeSelected = { newMode ->
+                    onInactiveDeliveryModeDraftChange(newMode)
+                    scheduleDeliverySave()
+                }
             )
             Spacer(Modifier.height(8.dp))
-            StatusRow("Allow background audio", allowBackgroundAudioDraft, onAllowBackgroundAudioDraftChange)
-            StatusRow("Allow lockscreen audio", allowLockscreenAudioDraft, onAllowLockscreenAudioDraftChange)
-            StatusRow("Insistent mode", insistentModeDraft, onInsistentModeDraftChange)
+            StatusRow("Allow background audio", allowBackgroundAudioDraft) { checked ->
+                onAllowBackgroundAudioDraftChange(checked)
+                scheduleDeliverySave()
+            }
+            StatusRow("Allow lockscreen audio", allowLockscreenAudioDraft) { checked ->
+                onAllowLockscreenAudioDraftChange(checked)
+                scheduleDeliverySave()
+            }
+            StatusRow("Insistent mode", insistentModeDraft) { checked ->
+                onInsistentModeDraftChange(checked)
+                scheduleDeliverySave()
+            }
             Spacer(Modifier.height(10.dp))
             SettingsCard("Pseudo-sync conversation") {
                 Text(
@@ -192,7 +232,10 @@ fun SettingsPanel(
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(8.dp))
-                StatusRow("Pseudo-sync (background/lockscreen)", pseudoSyncEnabledDraft, onPseudoSyncEnabledDraftChange)
+                StatusRow("Pseudo-sync (background/lockscreen)", pseudoSyncEnabledDraft) { checked ->
+                    onPseudoSyncEnabledDraftChange(checked)
+                    scheduleDeliverySave()
+                }
                 Spacer(Modifier.height(8.dp))
                 Text("Respond to:", style = MaterialTheme.typography.labelMedium)
                 Row(
@@ -205,7 +248,10 @@ fun SettingsPanel(
                         "unknown_too" to "Unknown too"
                     ).forEach { (value, label) ->
                         Button(
-                            onClick = { onRespondToVoicesDraftChange(value) }
+                            onClick = {
+                                onRespondToVoicesDraftChange(value)
+                                scheduleDeliverySave()
+                            }
                         ) {
                             Text(if (respondToVoicesDraft == value) "✓ $label" else label)
                         }
@@ -214,10 +260,6 @@ fun SettingsPanel(
             }
             Spacer(Modifier.height(8.dp))
             Text("Current saved delivery: $inactiveDeliveryMode", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveDeliveryPreferences) {
-                Text("Save delivery preferences")
-            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -251,25 +293,30 @@ fun SettingsPanel(
         Spacer(Modifier.height(10.dp))
 
         SettingsCard("Behavior") {
-            StatusRow("Available for interruptions", interruptionsEnabled, onInterruptionsEnabledChange)
+            StatusRow("Available for interruptions", interruptionsEnabled) { checked ->
+                onInterruptionsEnabledChange(checked)
+                scheduleAutonomySave()
+            }
             Spacer(Modifier.height(8.dp))
             Text("Allowed scarcity: ${scarcityLevel.toInt()}")
             Slider(
                 value = scarcityLevel,
-                onValueChange = onScarcityChange,
+                onValueChange = { v ->
+                    onScarcityChange(v)
+                    scheduleAutonomySave()
+                },
                 valueRange = 0f..100f
             )
             Spacer(Modifier.height(8.dp))
             Text("Allowed inconvenience: ${inconvenienceLevel.toInt()}")
             Slider(
                 value = inconvenienceLevel,
-                onValueChange = onInconvenienceChange,
+                onValueChange = { v ->
+                    onInconvenienceChange(v)
+                    scheduleAutonomySave()
+                },
                 valueRange = 0f..100f
             )
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveAutonomy) {
-                Text("Save behavior")
-            }
         }
 
         Spacer(Modifier.height(10.dp))

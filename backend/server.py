@@ -1192,6 +1192,20 @@ def should_send_proactive_push(u: Dict[str, Any]) -> bool:
     operational = u.get("operational_state", {})
 
     app_foreground = bool(device.get("app_foreground", False))
+    # If the client stopped sending DEVICE_STATE (e.g. app was killed / OS suspended it),
+    # app_foreground may remain stuck at True forever, blocking proactive pushes.
+    # Treat it as background if the last update is stale.
+    try:
+        updated_ts_ms = int(device.get("updated_ts_ms", 0) or 0)
+    except Exception:
+        updated_ts_ms = 0
+
+    if app_foreground:
+        if updated_ts_ms:
+            age_ms = now_ms() - updated_ts_ms
+            if age_ms > 120_000:  # 2 minutes
+                app_foreground = False
+
     if app_foreground:
         return False
 
