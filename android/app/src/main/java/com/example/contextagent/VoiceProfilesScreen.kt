@@ -60,7 +60,16 @@ fun VoiceProfilesScreen(
                     horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(slot.title, style = MaterialTheme.typography.titleMedium)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(slot.title, style = MaterialTheme.typography.titleMedium)
+                        if (slot.isSelf) {
+                            Text(
+                                "Sou eu (usuário do app)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF1976D2)
+                            )
+                        }
+                    }
                     Text(
                         slot.statusLabel(),
                         style = MaterialTheme.typography.bodySmall,

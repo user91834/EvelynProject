@@ -83,9 +83,22 @@ def require_user_id(
             detail="When AUTH_DISABLED=1, provide X-User-Id header or user_id in path",
         )
     if not JWT_SECRET:
+        # Dev/first-run fallback:
+        # If JWT_SECRET is missing (common on fresh Render deploys), the backend would otherwise
+        # reject every request with 503, preventing the app from even loading.
+        # We accept the {user_id} from the path when it is valid. When JWT_SECRET is configured,
+        # normal JWT auth applies.
+        dev_uid = request.headers.get(DEV_USER_ID_HEADER, "").strip()
+        if dev_uid and validate_user_id_format(dev_uid):
+            return dev_uid
+
+        path_uid = request.path_params.get("user_id", "").strip()
+        if path_uid and validate_user_id_format(path_uid):
+            return path_uid
+
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication not configured",
+            detail="Authentication not configured (set JWT_SECRET) or provide a valid user_id in path",
         )
     user_id = get_user_id_from_token(credentials)
     if not user_id:

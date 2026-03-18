@@ -77,11 +77,13 @@ fun SettingsPanel(
     onSendContext: () -> Unit,
     onSaveAutonomy: () -> Unit,
     onSaveRelationshipMode: () -> Unit,
-    onSaveDeliveryPreferences: () -> Unit
+    onSaveDeliveryPreferences: () -> Unit,
+    onLogout: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val scrollState = rememberScrollState()
-    val prefs = remember { LocalContext.current.getSharedPreferences("evelyn_prefs", Context.MODE_PRIVATE) }
-    var jwtToken by remember { mutableStateOf(prefs.getString("jwt_token", "") ?: "") }
+    val prefs = remember(context) { context.getSharedPreferences("evelyn_prefs", Context.MODE_PRIVATE) }
+    var jwtToken by remember(prefs) { mutableStateOf(prefs.getString("jwt_token", "") ?: "") }
 
     Column(
         modifier = Modifier
@@ -102,6 +104,15 @@ fun SettingsPanel(
         }
 
         Spacer(Modifier.height(12.dp))
+
+        if (onLogout != null) {
+            SettingsCard("Conta") {
+                Button(onClick = onLogout) {
+                    Text("Sair")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         SettingsCard("Token (opcional)") {
             Text("Se o backend exigir autenticação, informe o token JWT. Será enviado em todas as requisições.", style = MaterialTheme.typography.bodySmall)

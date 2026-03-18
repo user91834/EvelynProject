@@ -146,7 +146,8 @@ data class VoiceSlot(
     val title: String,
     val displayName: String,
     val type: String,
-    val enrolled: Boolean
+    val enrolled: Boolean,
+    val isSelf: Boolean = false
 ) {
     fun statusLabel(): String = when {
         !enrolled -> "não cadastrado"
@@ -159,22 +160,92 @@ class MainActivity : ComponentActivity() {
 
     private val baseUrl: String
         get() = BuildConfig.BASE_URL
+
+    private var currentUserId: String? = null
     private val userId: String
-        get() = BuildConfig.DEFAULT_USER_ID
+        get() = currentUserId?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_USER_ID
+
+    private fun getStoredUserId(): String? =
+        getSharedPreferences("evelyn_prefs", MODE_PRIVATE).getString("user_id", null)
+
+    private fun saveLogin(userId: String, token: String) {
+        getSharedPreferences("evelyn_prefs", MODE_PRIVATE).edit()
+            .putString("user_id", userId)
+            .putString("jwt_token", token)
+            .apply()
+        currentUserId = userId
+    }
+
+    private fun logout() {
+        getSharedPreferences("evelyn_prefs", MODE_PRIVATE).edit()
+            .remove("user_id")
+            .apply()
+        currentUserId = null
+    }
 
     private val client by lazy {
         OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor(Interceptor { chain ->
-                val token = getSharedPreferences("evelyn_prefs", MODE_PRIVATE)
-                    .getString("jwt_token", null)
-                val request = if (!token.isNullOrBlank()) {
-                    chain.request().newBuilder()
-                        .addHeader("Authorization", "Bearer $token")
-                        .build()
-                } else chain.request()
-                chain.proceed(request)
+                val prefs = getSharedPreferences("evelyn_prefs", MODE_PRIVATE)
+                val token = prefs.getString("jwt_token", null)
+                val userId = prefs.getString("user_id", null) ?: BuildConfig.DEFAULT_USER_ID
+                var req = chain.request().newBuilder()
+                if (!token.isNullOrBlank()) {
+                    req = req.addHeader("Authorization", "Bearer $token")
+                }
+                if (userId.isNotBlank()) {
+                    req = req.addHeader("X-User-Id", userId)
+                }
+                chain.proceed(req.build())
             })
             .build()
+    }
+
+    private fun testBackendConnectivity(
+        onOk: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val url = "$baseUrl/ping"
+        val attempts = 3
+        val backoffMs = 2000L
+        Thread {
+            var lastErr: Exception? = null
+            repeat(attempts) { idx ->
+                try {
+                    val req = Request.Builder()
+                        .url(url)
+                        .get()
+                        .build()
+                    client.newCall(req).execute().use { resp ->
+                        val body = resp.body?.string().orEmpty()
+                        if (resp.isSuccessful) {
+                            Handler(Looper.getMainLooper()).post {
+                                onOk("Backend OK (${resp.code})")
+                            }
+                            return@Thread
+                        }
+                        lastErr = RuntimeException("HTTP ${resp.code}: $body")
+                    }
+                } catch (e: Exception) {
+                    lastErr = e
+                }
+
+                if (idx < attempts - 1) {
+                    try {
+                        Thread.sleep(backoffMs * (idx + 1))
+                    } catch (_: Exception) {}
+                }
+            }
+
+            val detail = lastErr?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: "unknown error"
+            Handler(Looper.getMainLooper()).post {
+                onError("Nao foi possivel alcancar o backend no Render.\nURL: $url\nDetalhe: $detail")
+            }
+        }.start()
     }
     private val deviceId by lazy { getOrCreateDeviceId() }
 
@@ -211,12 +282,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        currentUserId = getStoredUserId()
 
         ensureNotificationPermission()
         ensureAudioPermission()
         createMessageChannel()
 
         setContent {
+            var isLoggedIn by remember { mutableStateOf(!getStoredUserId().isNullOrBlank()) }
+            if (!isLoggedIn) {
+                LoginScreen(
+                    defaultUserId = BuildConfig.DEFAULT_USER_ID,
+                    onLoginSuccess = { id, token ->
+                        saveLogin(id, token)
+                        isLoggedIn = true
+                    }
+                )
+                return@setContent
+            }
+
             var debugText by remember { mutableStateOf("Ready.") }
             var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
             var inputText by remember { mutableStateOf(TextFieldValue("")) }
@@ -234,7 +318,32 @@ class MainActivity : ComponentActivity() {
 
             val onDebugWithNetwork: (String) -> Unit = { msg ->
                 debugText = msg
-                if (msg.contains("ERROR")) networkError = "Falha na conexão. Verifique a rede e tente novamente."
+                val lower = msg.lowercase()
+
+                val isAuth = lower.contains("401") || lower.contains("403") ||
+                    lower.contains("unauthorized") || lower.contains("forbidden")
+
+                val isNetwork = lower.contains("timeout") ||
+                    lower.contains("timed out") ||
+                    lower.contains("unknownhost") ||
+                    lower.contains("ssl") ||
+                    lower.contains("connectexception") ||
+                    lower.contains("failed to connect") ||
+                    lower.contains("connection refused") ||
+                    lower.contains("no route") ||
+                    lower.contains("i/o exception") ||
+                    lower.contains("ioexception") ||
+                    lower.contains("connect timed out")
+
+                val isErrorish = lower.contains("error") || lower.contains("exception")
+
+                if (isErrorish && (isAuth || isNetwork)) {
+                    networkError = if (isAuth) {
+                        "Falha na autenticacao. Informe o token JWT (ou entre novamente)."
+                    } else {
+                        "Falha na conexao com o backend (Render). Verifique a URL e tente novamente."
+                    }
+                }
             }
 
             var playingUrl by remember { mutableStateOf<String?>(null) }
@@ -286,6 +395,14 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(Unit) {
+                testBackendConnectivity(
+                    onOk = { onDebugWithNetwork(it) },
+                    onError = { err ->
+                        debugText = err
+                        networkError = err
+                    }
+                )
+
                 FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                     if (!task.isSuccessful) {
                         debugText = "TOKEN ERROR: ${task.exception?.message}"
@@ -502,7 +619,8 @@ class MainActivity : ComponentActivity() {
                                         title = "Conhecido ${n + 1}",
                                         displayName = "",
                                         type = "verbal",
-                                        enrolled = false
+                                        enrolled = false,
+                                        isSelf = false
                                     )
                                 }
                             )
@@ -621,6 +739,10 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onDebug = onDebugWithNetwork
                                     )
+                                },
+                                onLogout = {
+                                    logout()
+                                    isLoggedIn = false
                                 }
                             )
                         } else {
@@ -1475,6 +1597,9 @@ class MainActivity : ComponentActivity() {
                     val prefs = obj.optJSONObject("channel_preferences")
 
                     Handler(Looper.getMainLooper()).post {
+                        if (!resp.isSuccessful) {
+                            onDebug("ROUTINE LOAD FAIL -> ${resp.code}: ${body.take(400)}")
+                        }
                         onLoaded(
                             legacyRoutine?.optString("current_activity", "...") ?: "...",
                             temporalContext?.optString("part_of_day", "...") ?: "...",
@@ -1574,7 +1699,8 @@ class MainActivity : ComponentActivity() {
                         title = owner?.optString("title", "Usuário") ?: "Usuário",
                         displayName = owner?.optString("display_name", "") ?: "",
                         type = owner?.optString("type", "verbal") ?: "verbal",
-                        enrolled = owner?.optBoolean("enrolled", false) ?: false
+                        enrolled = owner?.optBoolean("enrolled", false) ?: false,
+                        isSelf = true
                     )
                     val knownArr = obj.optJSONArray("known") ?: org.json.JSONArray()
                     val knownSlots = mutableListOf<VoiceSlot>()
@@ -1586,7 +1712,8 @@ class MainActivity : ComponentActivity() {
                                 title = k.optString("title", "Conhecido ${i + 1}"),
                                 displayName = k.optString("display_name", ""),
                                 type = k.optString("type", "verbal"),
-                                enrolled = k.optBoolean("enrolled", false)
+                                enrolled = k.optBoolean("enrolled", false),
+                                isSelf = false
                             )
                         )
                     }

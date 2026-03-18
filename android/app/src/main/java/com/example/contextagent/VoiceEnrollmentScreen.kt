@@ -79,10 +79,18 @@ fun VoiceEnrollmentScreen(
             }
         }
         Spacer(Modifier.height(16.dp))
+        if (slot.isSelf) {
+            Text(
+                "Esta voz é a sua (usuário do app).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF1976D2)
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
-            label = { Text("Nome do usuário/conhecido") },
+            label = { Text(if (slot.isSelf) "Seu nome" else "Nome do usuário/conhecido") },
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(12.dp))

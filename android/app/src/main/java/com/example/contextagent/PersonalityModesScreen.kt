@@ -1,6 +1,7 @@
 package com.example.contextagent
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
+private val DEFAULT_MODE_ORDER = listOf(
+    "miguxes", "ego", "dependente", "implicante", "dramatica", "eletrica",
+    "arlequina", "subindo_pelas_paredes", "instavel", "tagarela", "reflexiva", "provocadora"
+)
+private val DEFAULT_MODE_LABELS = mapOf(
+    "miguxes" to "Miguxês",
+    "ego" to "Ego",
+    "dependente" to "Dependente",
+    "implicante" to "Implicante",
+    "dramatica" to "Dramática",
+    "eletrica" to "Elétrica",
+    "arlequina" to "Arlequina",
+    "subindo_pelas_paredes" to "Subindo pelas paredes",
+    "instavel" to "Instável",
+    "tagarela" to "Tagarela",
+    "reflexiva" to "Reflexiva",
+    "provocadora" to "Provocadora"
+)
+
 @Composable
 fun PersonalityModesScreen(
     modes: Map<String, Int>,
@@ -31,8 +51,13 @@ fun PersonalityModesScreen(
     onBack: () -> Unit,
     onSave: (Map<String, Int>) -> Unit
 ) {
-    val order = (modes.keys + labels.keys).distinct().sorted()
-    var draft by remember(modes) { mutableStateOf(modes.toMutableMap()) }
+    val order = if (modes.isEmpty() && labels.isEmpty()) DEFAULT_MODE_ORDER
+        else (modes.keys + labels.keys).distinct().sorted()
+    val effectiveLabels = if (labels.isEmpty()) DEFAULT_MODE_LABELS else labels
+    var draft by remember(modes, order) {
+        val initial = order.associateWith { modes[it] ?: 0 }.toMutableMap()
+        mutableStateOf(initial)
+    }
 
     Column(
         modifier = Modifier
@@ -43,25 +68,32 @@ fun PersonalityModesScreen(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Modos de personalidade", style = MaterialTheme.typography.titleLarge)
-            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onBack) { Text("Voltar") }
                 Button(onClick = { onSave(draft) }) { Text("Salvar") }
             }
         }
         Spacer(Modifier.height(8.dp))
         Text("0 = desligado, 100 = máximo. Afeta o estilo da fala da personagem.", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { draft = order.associateWith { 0 }.toMutableMap() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Resetar para neutro (todos em 0)")
+        }
         Spacer(Modifier.height(16.dp))
         order.forEach { key ->
-            val label = labels[key] ?: key
+            val label = effectiveLabels[key] ?: key
             val value = draft[key] ?: 0
             Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(label, style = MaterialTheme.typography.titleSmall)
@@ -69,7 +101,10 @@ fun PersonalityModesScreen(
                 }
                 Slider(
                     value = value.toFloat().coerceIn(0f, 100f),
-                    onValueChange = { draft = draft.toMutableMap().apply { put(key, it.toInt().coerceIn(0, 100)) } },
+                    onValueChange = { newVal ->
+                        val v = newVal.toInt().coerceIn(0, 100)
+                        draft = draft.toMutableMap().apply { put(key, v) }
+                    },
                     valueRange = 0f..100f,
                     modifier = Modifier.fillMaxWidth()
                 )
