@@ -261,16 +261,26 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var isAppInForeground: Boolean = false
 
+    // Keeps a global copy so lifecycle/playback code can coordinate with pseudo-sync.
+    @Volatile
+    private var pseudoSyncEnabledActive: Boolean = false
+
     override fun onResume() {
         super.onResume()
         isAppInForeground = true
         postDeviceState()
+        if (pseudoSyncEnabledActive) {
+            updatePseudoSyncService(true) // Update service playback mode (foreground/background).
+        }
     }
 
     override fun onPause() {
         super.onPause()
         isAppInForeground = false
         postDeviceState()
+        if (pseudoSyncEnabledActive) {
+            updatePseudoSyncService(true) // Update service playback mode (foreground/background).
+        }
     }
 
     override fun onDestroy() {
@@ -396,9 +406,11 @@ class MainActivity : ComponentActivity() {
             }
 
             // Autoplay for assistant voice messages (normal chat).
-            // Pseudo-sync already plays audio inside the foreground service.
+            // In pseudo-sync: in foreground, UI autoplay is responsible for playback.
             LaunchedEffect(messages.size, playingUrl, pseudoSyncEnabled, allowBackgroundAudio, allowLockscreenAudio, isAppInForeground) {
-                if (pseudoSyncEnabled) return@LaunchedEffect
+                // In pseudo-sync, the foreground service plays in background/lockscreen.
+                // In foreground we want UI autoplay (and suppress the service VAD while UI plays).
+                if (pseudoSyncEnabled && !isAppInForeground) return@LaunchedEffect
                 if (playingUrl != null) return@LaunchedEffect
                 if (!isAppInForeground && !allowBackgroundAudio && !allowLockscreenAudio) return@LaunchedEffect
 
@@ -474,6 +486,7 @@ class MainActivity : ComponentActivity() {
                         allowLockscreenAudio = lockAudio
                         insistentMode = insist
                         pseudoSyncEnabled = pseudoSync
+                        pseudoSyncEnabledActive = pseudoSync
                         respondToVoices = respondTo
 
                         inactiveDeliveryModeDraft = mode
@@ -543,6 +556,7 @@ class MainActivity : ComponentActivity() {
                                         allowLockscreenAudio = lockAudio
                                         insistentMode = insist
                                         pseudoSyncEnabled = pseudoSync
+                                        pseudoSyncEnabledActive = pseudoSync
                                         respondToVoices = respondTo
 
                                         inactiveDeliveryModeDraft = modeDelivery
@@ -1154,11 +1168,21 @@ class MainActivity : ComponentActivity() {
         if (enabled) {
             intent.putExtra(VoiceCaptureForegroundService.EXTRA_BASE_URL, baseUrl)
             intent.putExtra(VoiceCaptureForegroundService.EXTRA_USER_ID, userId)
+            intent.putExtra(VoiceCaptureForegroundService.EXTRA_APP_IN_FOREGROUND, isAppInForeground)
             ContextCompat.startForegroundService(this, intent)
         } else {
             intent.action = VoiceCaptureForegroundService.ACTION_STOP
             startService(intent)
         }
+    }
+
+    private fun setPseudoSyncVADSuppression(suppressed: Boolean) {
+        if (!pseudoSyncEnabledActive) return
+        val intent = Intent(this, VoiceCaptureForegroundService::class.java).apply {
+            action = VoiceCaptureForegroundService.ACTION_SUPPRESS_VAD_SET
+            putExtra(VoiceCaptureForegroundService.EXTRA_SUPPRESS_VAD, suppressed)
+        }
+        startService(intent)
     }
 
     private fun ensureAudioPermission() {
@@ -1314,6 +1338,7 @@ class MainActivity : ComponentActivity() {
 
         player = null
         currentlyPlayingUrl = null
+        setPseudoSyncVADSuppression(false)
     }
 
     private fun playAudio(
@@ -1332,6 +1357,7 @@ class MainActivity : ComponentActivity() {
             mp.setDataSource(url)
             mp.setOnPreparedListener { prepared ->
                 currentlyPlayingUrl = url
+                setPseudoSyncVADSuppression(true) // Avoid the pseudo-sync mic reacting to this UI playback.
                 prepared.start()
 
                 val duration = prepared.duration.toLong().coerceAtLeast(0L)
@@ -1376,12 +1402,14 @@ class MainActivity : ComponentActivity() {
                 if (player === it) {
                     player = null
                 }
+                setPseudoSyncVADSuppression(false)
                 onFinished()
             }
 
             mp.prepareAsync()
             player = mp
         } catch (e: Exception) {
+            setPseudoSyncVADSuppression(false)
             onDebug("PLAY AUDIO ERROR: ${e.javaClass.simpleName}: ${e.message}")
         }
     }

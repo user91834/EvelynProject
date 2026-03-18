@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,6 +34,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.sqrt
 
 /**
@@ -62,7 +64,14 @@ class VoiceCaptureForegroundService : Service() {
         const val EXTRA_BASE_URL = "base_url"
         const val EXTRA_USER_ID = "user_id"
         const val EXTRA_SPEAKER_ID = "speaker_id"
+        const val EXTRA_APP_IN_FOREGROUND = "app_foreground"
+
         const val ACTION_STOP = "action_stop"
+        const val ACTION_SUPPRESS_VAD_SET = "action_set_suppress_vad"
+        const val EXTRA_SUPPRESS_VAD = "suppress_vad"
+
+        // Prevents STT from triggering on residual assistant audio ("tail") after playback ends.
+        const val POST_PLAYBACK_VAD_COOLDOWN_MS: Long = 900L
     }
 
     private val client = OkHttpClient.Builder().build()
@@ -75,6 +84,8 @@ class VoiceCaptureForegroundService : Service() {
     private var captureJob: Job? = null
     private val isRunning = AtomicBoolean(false)
     private val suppressVAD = AtomicBoolean(false)
+    private var playbackAllowed: Boolean = true
+    private val vadControlSeq = AtomicLong(0)
     private var mediaPlayer: MediaPlayer? = null
 
     private val circularBuffer = ByteArray(BUFFER_SIZE_BYTES)
@@ -94,10 +105,20 @@ class VoiceCaptureForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val action = intent?.action
+
+        if (action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
         }
+
+        if (action == ACTION_SUPPRESS_VAD_SET) {
+            val suppress = intent?.getBooleanExtra(EXTRA_SUPPRESS_VAD, false) ?: false
+            requestSuppressVAD(suppress)
+            return START_STICKY
+        }
+
+        playbackAllowed = !(intent?.getBooleanExtra(EXTRA_APP_IN_FOREGROUND, false) ?: false)
         baseUrl = intent?.getStringExtra(EXTRA_BASE_URL) ?: ""
         userId = intent?.getStringExtra(EXTRA_USER_ID) ?: ""
         speakerId = intent?.getStringExtra(EXTRA_SPEAKER_ID)?.takeIf { it.isNotBlank() }
@@ -279,6 +300,23 @@ class VoiceCaptureForegroundService : Service() {
         }
     }
 
+    private fun requestSuppressVAD(suppress: Boolean) {
+        val seq = vadControlSeq.incrementAndGet()
+        if (suppress) {
+            suppressVAD.set(true)
+            resetVadStateAndBuffer()
+            return
+        }
+        val localSeq = seq
+        scope.launch {
+            delay(POST_PLAYBACK_VAD_COOLDOWN_MS)
+            if (vadControlSeq.get() == localSeq) {
+                suppressVAD.set(false)
+                resetVadStateAndBuffer()
+            }
+        }
+    }
+
     private fun onSpeechSegmentClosed(startIdx: Int, endIdx: Int) {
         scope.launch {
             val wavFile = extractSegmentToWav(startIdx, endIdx) ?: return@launch
@@ -374,7 +412,7 @@ class VoiceCaptureForegroundService : Service() {
                 for (i in 0 until arr.length()) {
                     val msg = arr.getJSONObject(i)
                     val audioUrl = msg.optString("audio_url", "").takeIf { it.isNotBlank() }
-                    if (audioUrl != null) {
+                    if (audioUrl != null && playbackAllowed) {
                         playResponseAudio(audioUrl)
                         break
                     }
@@ -387,8 +425,7 @@ class VoiceCaptureForegroundService : Service() {
         try {
             // Suppress VAD/STT while the assistant audio is playing.
             // This avoids feeding our own TTS back into the microphone pipeline.
-            suppressVAD.set(true)
-            resetVadStateAndBuffer()
+            requestSuppressVAD(true)
 
             mediaPlayer?.release()
         } catch (_: Exception) {}
@@ -400,15 +437,13 @@ class VoiceCaptureForegroundService : Service() {
             }
             setOnCompletionListener {
                 releaseWakeLock()
-                suppressVAD.set(false)
-                resetVadStateAndBuffer()
+                requestSuppressVAD(false)
                 it.release()
                 if (mediaPlayer === it) mediaPlayer = null
             }
             setOnErrorListener { _, _, _ ->
                 releaseWakeLock()
-                suppressVAD.set(false)
-                resetVadStateAndBuffer()
+                requestSuppressVAD(false)
                 true
             }
             prepareAsync()
