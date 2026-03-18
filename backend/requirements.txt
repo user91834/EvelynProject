@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+openai
+google-auth
+python-multipart
+psycopg2-binary
+sqlalchemy
+eng_to_ipa
+PyJWT
+pytest
+pytest-asyncio
+httpx
+tzdata
+# Optional: for speaker embedding extraction in voice enrollment (resemblyzer)
+# resemblyzer
