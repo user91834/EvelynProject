@@ -25,3 +25,14 @@ Projeto que reúne o **backend** (API FastAPI, estado, emoção, LLM, TTS, push)
 - **Backend:** não versionar `backend/data/` (estado e mídia) no Git; usar `.env` para segredos.
 - **Android:** em produção, usar login real e JWT; `userId` e `baseUrl` já vêm do BuildConfig para facilitar builds diferentes.
 - **Segurança:** com auth ativa, todas as rotas por usuário validam JWT vs `user_id` no path.
+
+## Configuração do Firebase
+
+O arquivo `google-services.json` não está no repositório por motivos de segurança.
+
+Para rodar o projeto:
+
+1. Vá no Firebase Console
+2. Baixe o arquivo `google-services.json`
+3. Coloque em:
+   android/app/google-services.json

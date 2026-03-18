@@ -56,6 +56,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -84,6 +87,7 @@ import androidx.compose.ui.unit.sp
 import com.google.firebase.messaging.FirebaseMessaging
 import android.widget.Toast
 import kotlinx.coroutines.delay
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -157,7 +161,21 @@ class MainActivity : ComponentActivity() {
         get() = BuildConfig.BASE_URL
     private val userId: String
         get() = BuildConfig.DEFAULT_USER_ID
-    private val client = OkHttpClient()
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val token = getSharedPreferences("evelyn_prefs", MODE_PRIVATE)
+                    .getString("jwt_token", null)
+                val request = if (!token.isNullOrBlank()) {
+                    chain.request().newBuilder()
+                        .addHeader("Authorization", "Bearer $token")
+                        .build()
+                } else chain.request()
+                chain.proceed(request)
+            })
+            .build()
+    }
     private val deviceId by lazy { getOrCreateDeviceId() }
 
     private var recorder: MediaRecorder? = null
@@ -211,6 +229,13 @@ class MainActivity : ComponentActivity() {
             var pendingAssistant by remember { mutableStateOf(false) }
             var assistantTyping by remember { mutableStateOf(false) }
             var settingsOpen by remember { mutableStateOf(false) }
+            var networkError by remember { mutableStateOf<String?>(null) }
+            val snackbarHostState = remember { SnackbarHostState() }
+
+            val onDebugWithNetwork: (String) -> Unit = { msg ->
+                debugText = msg
+                if (msg.contains("ERROR")) networkError = "Falha na conexão. Verifique a rede e tente novamente."
+            }
 
             var playingUrl by remember { mutableStateOf<String?>(null) }
             var playbackPositionMs by remember { mutableLongStateOf(0L) }
@@ -269,7 +294,7 @@ class MainActivity : ComponentActivity() {
 
                     registerToken(
                         token = task.result,
-                        onDebug = { msg -> debugText = msg }
+                        onDebug = onDebugWithNetwork
                     )
                 }
 
@@ -302,7 +327,7 @@ class MainActivity : ComponentActivity() {
                         currentPartOfDay = partOfDay
                         currentTimezone = timezone
                     },
-                    onDebug = { msg -> debugText = msg }
+                    onDebug = onDebugWithNetwork
                 )
 
                 loadAutonomy(
@@ -314,7 +339,7 @@ class MainActivity : ComponentActivity() {
                         preferredAssistantOutput = prefAssistant
                         voiceAffinityScore = voiceAffinity
                     },
-                    onDebug = { msg -> debugText = msg }
+                    onDebug = onDebugWithNetwork
                 )
 
                 loadRoutine(
@@ -324,7 +349,7 @@ class MainActivity : ComponentActivity() {
                         currentTimezone = timezone
                         voiceAffinityScore = voiceAffinity
                     },
-                    onDebug = { msg -> debugText = msg }
+                    onDebug = onDebugWithNetwork
                 )
             }
 
@@ -371,7 +396,7 @@ class MainActivity : ComponentActivity() {
                                         currentPartOfDay = pod
                                         currentTimezone = tz
                                     },
-                                    onDebug = { msg -> debugText = msg }
+                                    onDebug = onDebugWithNetwork
                                 )
                             }
 
@@ -384,7 +409,7 @@ class MainActivity : ComponentActivity() {
                             currentPartOfDay = partOfDay
                             currentTimezone = timezone
                         },
-                        onDebug = { msg -> debugText = msg }
+                        onDebug = onDebugWithNetwork
                     )
 
                     loadRoutine(
@@ -394,10 +419,18 @@ class MainActivity : ComponentActivity() {
                             currentTimezone = timezone
                             voiceAffinityScore = voiceAffinity
                         },
-                        onDebug = { msg -> debugText = msg }
+                        onDebug = onDebugWithNetwork
                     )
 
                     delay(1800)
+                }
+            }
+
+            LaunchedEffect(networkError) {
+                val msg = networkError
+                if (msg != null) {
+                    snackbarHostState.showSnackbar(msg, actionLabel = "OK")
+                    networkError = null
                 }
             }
 
@@ -406,7 +439,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .navigationBarsPadding()
+                        .navigationBarsPadding(),
+                    snackbarHost = {
+                        SnackbarHost(snackbarHostState) { data ->
+                            Snackbar(snackbarData = data)
+                        }
+                    }
                 ) { innerPadding ->
 
                     Column(
@@ -441,16 +479,16 @@ class MainActivity : ComponentActivity() {
                                     voiceEnrollmentSlot = null
                                     loadVoiceProfiles(
                                         onLoaded = { voiceProfilesList = it },
-                                        onDebug = { debugText = it }
+                                        onDebug = onDebugWithNetwork
                                     )
                                 },
-                                onDebug = { debugText = it }
+                                onDebug = onDebugWithNetwork
                             )
                         } else if (voiceProfilesScreenOpen) {
                             LaunchedEffect(voiceProfilesScreenOpen) {
                                 loadVoiceProfiles(
                                     onLoaded = { voiceProfilesList = it },
-                                    onDebug = { debugText = it }
+                                    onDebug = onDebugWithNetwork
                                 )
                             }
                             VoiceProfilesScreen(
@@ -475,7 +513,7 @@ class MainActivity : ComponentActivity() {
                                         personalityModes = modes
                                         personalityModeLabels = labels
                                     },
-                                    onDebug = { debugText = it }
+                                    onDebug = onDebugWithNetwork
                                 )
                             }
                             PersonalityModesScreen(
@@ -489,7 +527,7 @@ class MainActivity : ComponentActivity() {
                                             personalityModes = newModes
                                             personalityModesScreenOpen = false
                                         },
-                                        onDebug = { debugText = it }
+                                        onDebug = onDebugWithNetwork
                                     )
                                 }
                             )
@@ -542,7 +580,7 @@ class MainActivity : ComponentActivity() {
                                         interruptionsEnabled = interruptionsEnabled,
                                         scarcityLevel = scarcityLevel.toInt(),
                                         inconvenienceLevel = inconvenienceLevel.toInt(),
-                                        onDebug = { debugText = it }
+                                        onDebug = onDebugWithNetwork
                                     )
                                 },
                                 onSaveRelationshipMode = {
@@ -552,7 +590,7 @@ class MainActivity : ComponentActivity() {
                                             relationshipMode = savedMode
                                             relationshipModeDraft = savedMode
                                         },
-                                        onDebug = { debugText = it }
+                                        onDebug = onDebugWithNetwork
                                     )
                                 },
                                 onOpenVoiceProfiles = { voiceProfilesScreenOpen = true },
@@ -581,7 +619,7 @@ class MainActivity : ComponentActivity() {
                                             respondToVoicesDraft = respondTo
                                             updatePseudoSyncService(pseudoSync)
                                         },
-                                        onDebug = { debugText = it }
+                                        onDebug = onDebugWithNetwork
                                     )
                                 }
                             )
@@ -632,7 +670,7 @@ class MainActivity : ComponentActivity() {
                                                                 playbackPositionMs = 0L
                                                             }
                                                         },
-                                                        onDebug = { debugText = it }
+                                                        onDebug = onDebugWithNetwork
                                                     )
                                                 }
                                             }
@@ -689,7 +727,7 @@ class MainActivity : ComponentActivity() {
                                                 voiceAffinityScore = voiceAffinity
                                             },
                                             onDone = { isSending = false },
-                                            onDebug = { debugText = it }
+                                            onDebug = onDebugWithNetwork
                                         )
                                     }
                                 },
@@ -727,7 +765,7 @@ class MainActivity : ComponentActivity() {
                                                     voiceAffinityScore = voiceAffinity
                                                 },
                                                 onDone = { },
-                                                onDebug = { debugText = it }
+                                                onDebug = onDebugWithNetwork
                                             )
                                         },
                                         onError = {
@@ -1953,300 +1991,6 @@ private fun ChatTopBar(
 }
 
 @Composable
-private fun SettingsPanel(
-    relationshipMode: String,
-    currentActivity: String,
-    currentPartOfDay: String,
-    currentTimezone: String,
-    inactiveDeliveryMode: String,
-    allowBackgroundAudio: Boolean,
-    allowLockscreenAudio: Boolean,
-    insistentMode: Boolean,
-    pseudoSyncEnabledDraft: Boolean,
-    respondToVoicesDraft: String,
-    relationshipModeDraft: String,
-    inactiveDeliveryModeDraft: String,
-    allowBackgroundAudioDraft: Boolean,
-    allowLockscreenAudioDraft: Boolean,
-    insistentModeDraft: Boolean,
-    preferredUserInput: String,
-    preferredAssistantOutput: String,
-    voiceAffinityScore: Int,
-    interruptionsEnabled: Boolean,
-    scarcityLevel: Float,
-    inconvenienceLevel: Float,
-    contextText: TextFieldValue,
-    debugText: String,
-    onClose: () -> Unit,
-    onContextTextChange: (TextFieldValue) -> Unit,
-    onInterruptionsEnabledChange: (Boolean) -> Unit,
-    onScarcityChange: (Float) -> Unit,
-    onInconvenienceChange: (Float) -> Unit,
-    onRelationshipModeDraftChange: (String) -> Unit,
-    onInactiveDeliveryModeDraftChange: (String) -> Unit,
-    onAllowBackgroundAudioDraftChange: (Boolean) -> Unit,
-    onAllowLockscreenAudioDraftChange: (Boolean) -> Unit,
-    onInsistentModeDraftChange: (Boolean) -> Unit,
-    onPseudoSyncEnabledDraftChange: (Boolean) -> Unit,
-    onRespondToVoicesDraftChange: (String) -> Unit,
-    onOpenVoiceProfiles: () -> Unit,
-    onOpenPersonalityModes: () -> Unit,
-    onSendContext: () -> Unit,
-    onSaveAutonomy: () -> Unit,
-    onSaveRelationshipMode: () -> Unit,
-    onSaveDeliveryPreferences: () -> Unit
-) {
-    val scrollState = rememberScrollState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF7F5F2))
-            .verticalScroll(scrollState)
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Conversation settings", style = MaterialTheme.typography.titleLarge)
-            Button(onClick = onClose) {
-                Text("Back")
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        SettingsCard("Vozes") {
-            Button(onClick = onOpenVoiceProfiles) {
-                Text("Incluir vozes")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Modos de personalidade") {
-            Text("Ajuste a intensidade de cada modo (0–100). Afeta o estilo da linguagem da Evelyn.", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onOpenPersonalityModes) {
-                Text("Configurar modos")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Current internal state") {
-            SettingsInfo("Relationship mode", relationshipMode)
-            SettingsInfo("Part of day", currentPartOfDay)
-            SettingsInfo("Timezone", currentTimezone)
-            SettingsInfo("Legacy activity", currentActivity)
-            SettingsInfo("Inactive delivery", inactiveDeliveryMode)
-            SettingsInfo("Background audio", allowBackgroundAudio.toString())
-            SettingsInfo("Lockscreen audio", allowLockscreenAudio.toString())
-            SettingsInfo("Insistent mode", insistentMode.toString())
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Relationship mode") {
-            RelationshipModeSelector(
-                selectedMode = relationshipModeDraft,
-                onModeSelected = onRelationshipModeDraftChange
-            )
-
-            Spacer(Modifier.height(8.dp))
-            Text("Current saved mode: $relationshipMode", style = MaterialTheme.typography.bodySmall)
-
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveRelationshipMode) {
-                Text("Save relationship mode")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Delivery preferences") {
-            DeliveryModeSelector(
-                selectedMode = inactiveDeliveryModeDraft,
-                onModeSelected = onInactiveDeliveryModeDraftChange
-            )
-
-            Spacer(Modifier.height(8.dp))
-            StatusRow("Allow background audio", allowBackgroundAudioDraft, onAllowBackgroundAudioDraftChange)
-            StatusRow("Allow lockscreen audio", allowLockscreenAudioDraft, onAllowLockscreenAudioDraftChange)
-            StatusRow("Insistent mode", insistentModeDraft, onInsistentModeDraftChange)
-
-            Spacer(Modifier.height(10.dp))
-            SettingsCard("Pseudo-sync conversation") {
-                Text(
-                    "Runs when app is in background or screen locked. Listens continuously, detects speech, then STT → LLM → TTS → play.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(8.dp))
-                StatusRow("Pseudo-sync (background/lockscreen)", pseudoSyncEnabledDraft, onPseudoSyncEnabledDraftChange)
-                Spacer(Modifier.height(8.dp))
-                Text("Respond to:", style = MaterialTheme.typography.labelMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf(
-                        "only_me" to "Only my voice",
-                        "known_too" to "Known voices too",
-                        "unknown_too" to "Unknown too"
-                    ).forEach { (value, label) ->
-                        Button(
-                            onClick = { onRespondToVoicesDraftChange(value) }
-                        ) {
-                            Text(if (respondToVoicesDraft == value) "✓ $label" else label)
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            Text("Current saved delivery: $inactiveDeliveryMode", style = MaterialTheme.typography.bodySmall)
-
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveDeliveryPreferences) {
-                Text("Save delivery preferences")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Channel preference memory") {
-            SettingsInfo("Preferred user input", preferredUserInput)
-            SettingsInfo("Preferred assistant output", preferredAssistantOutput)
-            SettingsInfo("Voice affinity", voiceAffinityScore.toString())
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Quick context") {
-            OutlinedTextField(
-                value = contextText,
-                onValueChange = onContextTextChange,
-                label = { Text("Example: I'm walking in the park") },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 2,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    autoCorrect = true
-                )
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSendContext) {
-                Text("Send context")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Behavior") {
-            StatusRow("Available for interruptions", interruptionsEnabled, onInterruptionsEnabledChange)
-
-            Spacer(Modifier.height(8.dp))
-            Text("Allowed scarcity: ${scarcityLevel.toInt()}")
-            Slider(
-                value = scarcityLevel,
-                onValueChange = onScarcityChange,
-                valueRange = 0f..100f
-            )
-
-            Spacer(Modifier.height(8.dp))
-            Text("Allowed inconvenience: ${inconvenienceLevel.toInt()}")
-            Slider(
-                value = inconvenienceLevel,
-                onValueChange = onInconvenienceChange,
-                valueRange = 0f..100f
-            )
-
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onSaveAutonomy) {
-                Text("Save behavior")
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        SettingsCard("Debug") {
-            Text(debugText, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun SettingsCard(
-    title: String,
-    content: @Composable () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun SettingsInfo(label: String, value: String) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(6.dp))
-    }
-}
-
-@Composable
-private fun RelationshipModeSelector(
-    selectedMode: String,
-    onModeSelected: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val options = listOf(
-            "friendship" to "Friendship",
-            "friends_with_benefits" to "Friends with benefits",
-            "open_relationship" to "Open relationship",
-            "monogamous_relationship" to "Monogamous relationship"
-        )
-
-        options.forEach { (value, label) ->
-            Button(onClick = { onModeSelected(value) }) {
-                Text(if (selectedMode == value) "✓ $label" else label)
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeliveryModeSelector(
-    selectedMode: String,
-    onModeSelected: (String) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        val options = listOf("text", "audio", "both")
-
-        options.forEach { mode ->
-            Button(onClick = { onModeSelected(mode) }) {
-                Text(if (selectedMode == mode) "✓ $mode" else mode)
-            }
-        }
-    }
-}
-
-
-
-@Composable
 private fun InputBar(
     inputText: TextFieldValue,
     isSending: Boolean,
@@ -2504,300 +2248,6 @@ private fun SoundWaveMini(active: Boolean) {
                     .background(Color(0xFF34B7F1))
             )
         }
-    }
-}
-
-@Composable
-private fun PersonalityModesScreen(
-    modes: Map<String, Int>,
-    labels: Map<String, String>,
-    onBack: () -> Unit,
-    onSave: (Map<String, Int>) -> Unit
-) {
-    val order = (modes.keys + labels.keys).distinct().sorted()
-    var draft by remember(modes) { mutableStateOf(modes.toMutableMap()) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF7F5F2))
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Modos de personalidade", style = MaterialTheme.typography.titleLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onBack) { Text("Voltar") }
-                Button(onClick = { onSave(draft) }) { Text("Salvar") }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text("0 = desligado, 100 = máximo. Afeta o estilo da fala da personagem.", style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(16.dp))
-        order.forEach { key ->
-            val label = labels[key] ?: key
-            val value = draft[key] ?: 0
-            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(label, style = MaterialTheme.typography.titleSmall)
-                    Text("$value", style = MaterialTheme.typography.bodyMedium)
-                }
-                Slider(
-                    value = value.toFloat().coerceIn(0f, 100f),
-                    onValueChange = { draft = draft.toMutableMap().apply { put(key, it.toInt().coerceIn(0, 100)) } },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun VoiceProfilesScreen(
-    slots: List<VoiceSlot>,
-    onBack: () -> Unit,
-    onSelectSlot: (VoiceSlot) -> Unit,
-    onAddKnown: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF7F5F2))
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Incluir vozes", style = MaterialTheme.typography.titleLarge)
-            Button(onClick = onBack) {
-                Text("Voltar")
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        slots.forEach { slot ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                onClick = { onSelectSlot(slot) },
-                shape = RoundedCornerShape(12.dp),
-                color = Color.White,
-                tonalElevation = 1.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(slot.title, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        slot.statusLabel(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = onAddKnown) {
-            Text("+ Incluir conhecidos")
-        }
-    }
-}
-
-@Composable
-private fun VoiceEnrollmentScreen(
-    slot: VoiceSlot,
-    baseUrl: String,
-    userId: String,
-    client: okhttp3.OkHttpClient,
-    onStartRecording: () -> Unit,
-    onStopRecording: ((File?) -> Unit) -> Unit,
-    getAudioDurationMs: (File, (Long) -> Unit) -> Unit,
-    onPlayRecordedFile: (File) -> Unit,
-    onBack: () -> Unit,
-    onSuccess: () -> Unit,
-    onDebug: (String) -> Unit
-) {
-    val context = LocalContext.current
-    var name by remember { mutableStateOf(slot.displayName) }
-    var isNonVerbal by remember { mutableStateOf(slot.type == "nonverbal") }
-    var isRecording by remember { mutableStateOf(false) }
-    var recordedFile by remember { mutableStateOf<File?>(null) }
-    var isSaving by remember { mutableStateOf(false) }
-
-    val instructionText = if (isNonVerbal) "Grave a sua voz" else "Grave sua voz lendo esse texto"
-    val readingText = if (isNonVerbal) "" else "Olá, estou gravando minha voz para que o sistema possa me reconhecer com mais precisão."
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF7F5F2))
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(slot.title, style = MaterialTheme.typography.titleLarge)
-            Button(onClick = onBack) {
-                Text("Voltar")
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Nome do usuário/conhecido") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Não verbal")
-            Spacer(Modifier.width(8.dp))
-            Switch(checked = isNonVerbal, onCheckedChange = { isNonVerbal = it })
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(instructionText, style = MaterialTheme.typography.bodyMedium)
-        if (readingText.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFFEEEEEE),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text(
-                    readingText,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (!isRecording) {
-                Button(onClick = {
-                    isRecording = true
-                    recordedFile = null
-                    onStartRecording()
-                }) {
-                    Text("Gravar")
-                }
-            } else {
-                Button(onClick = {
-                    isRecording = false
-                    onStopRecording { file -> recordedFile = file }
-                }) {
-                    Text("Parar")
-                }
-            }
-            Button(
-                onClick = {
-                    val f = recordedFile
-                    if (f != null) onPlayRecordedFile(f)
-                },
-                enabled = recordedFile != null
-            ) {
-                Text("Ouvir")
-            }
-            Button(
-                onClick = {
-                    val n = name.trim()
-                    val f = recordedFile
-                    if (n.isBlank()) {
-                        Toast.makeText(context, "Gravação sem sucesso, tente novamente", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    if (f == null || !f.exists()) {
-                        Toast.makeText(context, "Gravação sem sucesso, tente novamente", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    isSaving = true
-                    getAudioDurationMs(f) { durationMs ->
-                        val minMs = if (isNonVerbal) 1000L else 3000L
-                        if (durationMs < minMs) {
-                            isSaving = false
-                            Toast.makeText(context, "Gravação sem sucesso, tente novamente", Toast.LENGTH_SHORT).show()
-                            return@getAudioDurationMs
-                        }
-                        val multipart = MultipartBody.Builder()
-                            .setType(MultipartBody.FORM)
-                            .addFormDataPart("profile_id", slot.id)
-                            .addFormDataPart("display_name", n)
-                            .addFormDataPart("voice_type", if (isNonVerbal) "nonverbal" else "verbal")
-                            .addFormDataPart("file", f.name, f.asRequestBody("audio/mp4".toMediaType()))
-                            .build()
-                        val req = Request.Builder()
-                            .url("$baseUrl/voice_profiles/$userId/enroll")
-                            .post(multipart)
-                            .build()
-                        Thread {
-                            try {
-                                client.newCall(req).execute().use { resp ->
-                                    val ok = resp.isSuccessful
-                                    Handler(Looper.getMainLooper()).post {
-                                        isSaving = false
-                                        if (ok) {
-                                            Toast.makeText(context, "Gravação bem sucedida", Toast.LENGTH_SHORT).show()
-                                            onSuccess()
-                                        } else {
-                                            Toast.makeText(context, "Gravação sem sucesso, tente novamente", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Handler(Looper.getMainLooper()).post {
-                                    isSaving = false
-                                    Toast.makeText(context, "Gravação sem sucesso, tente novamente", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }.start()
-                    }
-                },
-                enabled = !isSaving && recordedFile != null
-            ) {
-                Text(if (isSaving) "..." else "Salvar")
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

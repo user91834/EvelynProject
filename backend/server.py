@@ -1,4 +1,5 @@
-from fastapi import APIRouter, FastAPI, Query, UploadFile, File, Form, Depends, HTTPException, Body
+from fastapi import APIRouter, FastAPI, Query, UploadFile, File, Form, Depends, HTTPException, Body, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Dict, Any, Optional, List
 import logging
@@ -93,11 +94,19 @@ from llm import (
 from push import send_push_fcm, send_push_fcm_voice
 from database import init_db, test_connection, db_available
 from robotics import step_robotics_frame, start_kiss
+from rate_limit import is_rate_limited
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 router = APIRouter()
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if is_rate_limited(request):
+        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+    return await call_next(request)
 
 STATE: Dict[str, Any] = {}
 STATE_LOCK = threading.Lock()

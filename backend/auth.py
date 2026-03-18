@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import jwt
@@ -14,6 +15,17 @@ logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 DEV_USER_ID_HEADER = "X-User-Id"
+
+USER_ID_MIN_LEN = 1
+USER_ID_MAX_LEN = 80
+USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def validate_user_id_format(user_id: str) -> bool:
+    """Valid format: 1–80 chars, only letters, digits, underscore, hyphen."""
+    if not user_id or len(user_id) < USER_ID_MIN_LEN or len(user_id) > USER_ID_MAX_LEN:
+        return False
+    return bool(USER_ID_PATTERN.fullmatch(user_id))
 
 
 def get_user_id_from_token(credentials: Optional[HTTPAuthorizationCredentials]) -> Optional[str]:
@@ -52,9 +64,19 @@ def require_user_id(
     if AUTH_DISABLED:
         dev_uid = request.headers.get(DEV_USER_ID_HEADER, "").strip()
         if dev_uid:
+            if not validate_user_id_format(dev_uid):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id format (use letters, digits, underscore, hyphen; 1–80 chars)",
+                )
             return dev_uid
         path_uid = request.path_params.get("user_id", "").strip()
         if path_uid:
+            if not validate_user_id_format(path_uid):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id format (use letters, digits, underscore, hyphen; 1–80 chars)",
+                )
             return path_uid
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -71,6 +93,11 @@ def require_user_id(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authorization",
         )
+    if not validate_user_id_format(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user_id format (use letters, digits, underscore, hyphen; 1–80 chars)",
+        )
     return user_id
 
 
@@ -80,6 +107,11 @@ def validate_path_user_id(
 ) -> str:
     """Dependency for routes with {user_id} in path: ensures path matches authenticated user."""
     path_user_id = request.path_params.get("user_id", "")
+    if not validate_user_id_format(path_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user_id format (use letters, digits, underscore, hyphen; 1–80 chars)",
+        )
     if path_user_id != auth_user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return path_user_id
