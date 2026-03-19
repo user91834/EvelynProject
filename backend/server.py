@@ -1583,6 +1583,10 @@ def _merge_delivery_preferences(u: Dict[str, Any], payload: Dict[str, Any]):
         prefs["pseudo_sync_enabled"] = bool(payload["pseudo_sync_enabled"])
     if "respond_to_voices" in payload and payload["respond_to_voices"] in {"only_me", "known_too", "unknown_too"}:
         prefs["respond_to_voices"] = payload["respond_to_voices"]
+    if "preferred_languages" in payload and isinstance(payload["preferred_languages"], list):
+        prefs["preferred_languages"] = [str(x).strip()[:20] for x in payload["preferred_languages"] if x]
+    elif "preferred_languages" in payload and isinstance(payload["preferred_languages"], str):
+        prefs["preferred_languages"] = [s.strip()[:20] for s in payload["preferred_languages"].split(",") if s.strip()]
     if "known_speakers" in payload and isinstance(payload["known_speakers"], list):
         prefs["known_speakers"] = [
             {"id": str(s.get("id", "")), "name": str(s.get("name", ""))[:80]}

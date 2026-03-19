@@ -51,6 +51,7 @@ fun SettingsPanel(
     insistentMode: Boolean,
     pseudoSyncEnabledDraft: Boolean,
     respondToVoicesDraft: String,
+    preferredLanguagesDraft: String,
     relationshipModeDraft: String,
     inactiveDeliveryModeDraft: String,
     allowBackgroundAudioDraft: Boolean,
@@ -76,6 +77,7 @@ fun SettingsPanel(
     onInsistentModeDraftChange: (Boolean) -> Unit,
     onPseudoSyncEnabledDraftChange: (Boolean) -> Unit,
     onRespondToVoicesDraftChange: (String) -> Unit,
+    onPreferredLanguagesDraftChange: (String) -> Unit,
     onOpenVoiceProfiles: () -> Unit,
     onOpenPersonalityModes: () -> Unit,
     onSendContext: () -> Unit,
@@ -257,6 +259,24 @@ fun SettingsPanel(
                         }
                     }
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            SettingsCard("Idiomas preferenciais") {
+                Text(
+                    "Códigos de idioma para a conversa (ex: pt-BR, en). A personagem tenderá a responder nesses idiomas quando natural.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = preferredLanguagesDraft,
+                    onValueChange = { v ->
+                        onPreferredLanguagesDraftChange(v)
+                        scheduleDeliverySave()
+                    },
+                    label = { Text("Ex: pt-BR, en") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
             }
             Spacer(Modifier.height(8.dp))
             Text("Current saved delivery: $inactiveDeliveryMode", style = MaterialTheme.typography.bodySmall)

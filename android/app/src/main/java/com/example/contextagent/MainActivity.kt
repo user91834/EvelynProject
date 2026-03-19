@@ -375,6 +375,7 @@ class MainActivity : ComponentActivity() {
             var insistentMode by remember { mutableStateOf(false) }
             var pseudoSyncEnabled by remember { mutableStateOf(false) }
             var respondToVoices by remember { mutableStateOf("only_me") }
+            var preferredLanguages by remember { mutableStateOf("") }
 
             var relationshipModeDraft by remember { mutableStateOf("friendship") }
             var inactiveDeliveryModeDraft by remember { mutableStateOf("text") }
@@ -383,6 +384,7 @@ class MainActivity : ComponentActivity() {
             var insistentModeDraft by remember { mutableStateOf(false) }
             var pseudoSyncEnabledDraft by remember { mutableStateOf(false) }
             var respondToVoicesDraft by remember { mutableStateOf("only_me") }
+            var preferredLanguagesDraft by remember { mutableStateOf("") }
 
             var voiceProfilesScreenOpen by remember { mutableStateOf(false) }
             var voiceEnrollmentSlot by remember { mutableStateOf<VoiceSlot?>(null) }
@@ -480,7 +482,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onPending = { pendingAssistant = it },
                     onTyping = { assistantTyping = it },
-                    onDeliveryLoaded = { mode, bgAudio, lockAudio, insist, pseudoSync, respondTo ->
+                    onDeliveryLoaded = { mode, bgAudio, lockAudio, insist, pseudoSync, respondTo, preferredLangs ->
                         inactiveDeliveryMode = mode
                         allowBackgroundAudio = bgAudio
                         allowLockscreenAudio = lockAudio
@@ -488,6 +490,7 @@ class MainActivity : ComponentActivity() {
                         pseudoSyncEnabled = pseudoSync
                         pseudoSyncEnabledActive = pseudoSync
                         respondToVoices = respondTo
+                        preferredLanguages = preferredLangs
 
                         inactiveDeliveryModeDraft = mode
                         allowBackgroundAudioDraft = bgAudio
@@ -495,6 +498,7 @@ class MainActivity : ComponentActivity() {
                         insistentModeDraft = insist
                         pseudoSyncEnabledDraft = pseudoSync
                         respondToVoicesDraft = respondTo
+                        preferredLanguagesDraft = preferredLangs
                         updatePseudoSyncService(pseudoSync)
                     },
                     onTemporalLoaded = { partOfDay, timezone ->
@@ -550,7 +554,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onPending = { pendingAssistant = it },
                                     onTyping = { assistantTyping = it },
-                                    onDeliveryLoaded = { modeDelivery, bgAudio, lockAudio, insist, pseudoSync, respondTo ->
+                                    onDeliveryLoaded = { modeDelivery, bgAudio, lockAudio, insist, pseudoSync, respondTo, preferredLangs ->
                                         inactiveDeliveryMode = modeDelivery
                                         allowBackgroundAudio = bgAudio
                                         allowLockscreenAudio = lockAudio
@@ -558,6 +562,7 @@ class MainActivity : ComponentActivity() {
                                         pseudoSyncEnabled = pseudoSync
                                         pseudoSyncEnabledActive = pseudoSync
                                         respondToVoices = respondTo
+                                        preferredLanguages = preferredLangs
 
                                         inactiveDeliveryModeDraft = modeDelivery
                                         allowBackgroundAudioDraft = bgAudio
@@ -565,6 +570,7 @@ class MainActivity : ComponentActivity() {
                                         insistentModeDraft = insist
                                         pseudoSyncEnabledDraft = pseudoSync
                                         respondToVoicesDraft = respondTo
+                                        preferredLanguagesDraft = preferredLangs
                                         updatePseudoSyncService(pseudoSync)
                                     },
                                     onTemporalLoaded = { pod, tz ->
@@ -724,6 +730,7 @@ class MainActivity : ComponentActivity() {
                                 insistentModeDraft = insistentModeDraft,
                                 pseudoSyncEnabledDraft = pseudoSyncEnabledDraft,
                                 respondToVoicesDraft = respondToVoicesDraft,
+                                preferredLanguagesDraft = preferredLanguagesDraft,
                                 preferredUserInput = preferredUserInput,
                                 preferredAssistantOutput = preferredAssistantOutput,
                                 voiceAffinityScore = voiceAffinityScore,
@@ -744,6 +751,7 @@ class MainActivity : ComponentActivity() {
                                 onInsistentModeDraftChange = { insistentModeDraft = it },
                                 onPseudoSyncEnabledDraftChange = { pseudoSyncEnabledDraft = it },
                                 onRespondToVoicesDraftChange = { respondToVoicesDraft = it },
+                                onPreferredLanguagesDraftChange = { preferredLanguagesDraft = it },
                                 onSendContext = {
                                     val text = contextText.text.trim()
                                     if (text.isNotBlank()) {
@@ -779,13 +787,15 @@ class MainActivity : ComponentActivity() {
                                         insistentMode = insistentModeDraft,
                                         pseudoSyncEnabled = pseudoSyncEnabledDraft,
                                         respondToVoices = respondToVoicesDraft,
-                                        onSaved = { mode, bg, lock, insist, pseudoSync, respondTo ->
+                                        preferredLanguages = preferredLanguagesDraft,
+                                        onSaved = { mode, bg, lock, insist, pseudoSync, respondTo, preferredLangs ->
                                             inactiveDeliveryMode = mode
                                             allowBackgroundAudio = bg
                                             allowLockscreenAudio = lock
                                             insistentMode = insist
                                             pseudoSyncEnabled = pseudoSync
                                             respondToVoices = respondTo
+                                            preferredLanguages = preferredLangs
 
                                             inactiveDeliveryModeDraft = mode
                                             allowBackgroundAudioDraft = bg
@@ -793,6 +803,7 @@ class MainActivity : ComponentActivity() {
                                             insistentModeDraft = insist
                                             pseudoSyncEnabledDraft = pseudoSync
                                             respondToVoicesDraft = respondTo
+                                            preferredLanguagesDraft = preferredLangs
                                             updatePseudoSyncService(pseudoSync)
                                         },
                                         onDebug = onDebugWithNetwork
@@ -1602,9 +1613,12 @@ class MainActivity : ComponentActivity() {
         insistentMode: Boolean,
         pseudoSyncEnabled: Boolean,
         respondToVoices: String,
-        onSaved: (String, Boolean, Boolean, Boolean, Boolean, String) -> Unit,
+        preferredLanguages: String,
+        onSaved: (String, Boolean, Boolean, Boolean, Boolean, String, String) -> Unit,
         onDebug: (String) -> Unit
     ) {
+        val preferredLangsList = preferredLanguages.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val preferredLangsJson = preferredLangsList.joinToString(", ") { "\"${it.replace("\"", "\\\"")}\"" }
         val json = """
     {
       "inactive_delivery_mode": ${inactiveDeliveryMode.escapeJsonString()},
@@ -1612,7 +1626,8 @@ class MainActivity : ComponentActivity() {
       "allow_lockscreen_audio": $allowLockscreenAudio,
       "insistent_mode": $insistentMode,
       "pseudo_sync_enabled": $pseudoSyncEnabled,
-      "respond_to_voices": ${respondToVoices.escapeJsonString()}
+      "respond_to_voices": ${respondToVoices.escapeJsonString()},
+      "preferred_languages": [$preferredLangsJson]
     }
     """.trimIndent()
 
@@ -1636,7 +1651,11 @@ class MainActivity : ComponentActivity() {
                             prefs?.optBoolean("allow_lockscreen_audio", allowLockscreenAudio) ?: allowLockscreenAudio,
                             prefs?.optBoolean("insistent_mode", insistentMode) ?: insistentMode,
                             prefs?.optBoolean("pseudo_sync_enabled", pseudoSyncEnabled) ?: pseudoSyncEnabled,
-                            prefs?.optString("respond_to_voices", respondToVoices) ?: respondToVoices
+                            prefs?.optString("respond_to_voices", respondToVoices) ?: respondToVoices,
+                            run {
+                                val arr = prefs?.optJSONArray("preferred_languages")
+                                if (arr != null) (0 until arr.length()).map { arr.optString(it, "").trim() }.filter { it.isNotEmpty() }.joinToString(", ") else preferredLanguages
+                            }
                         )
                         onDebug("DELIVERY PREFS SAVE -> ${resp.code}")
                     }
@@ -1695,7 +1714,7 @@ class MainActivity : ComponentActivity() {
         onRelationshipMode: (String) -> Unit,
         onPending: (Boolean) -> Unit,
         onTyping: (Boolean) -> Unit,
-        onDeliveryLoaded: (String, Boolean, Boolean, Boolean, Boolean, String) -> Unit,
+        onDeliveryLoaded: (String, Boolean, Boolean, Boolean, Boolean, String, String) -> Unit,
         onTemporalLoaded: (String, String) -> Unit,
         onDebug: (String) -> Unit
     ) {
@@ -1729,7 +1748,12 @@ class MainActivity : ComponentActivity() {
                             deliveryPreferences?.optBoolean("allow_lockscreen_audio", false) ?: false,
                             deliveryPreferences?.optBoolean("insistent_mode", false) ?: false,
                             deliveryPreferences?.optBoolean("pseudo_sync_enabled", false) ?: false,
-                            deliveryPreferences?.optString("respond_to_voices", "only_me") ?: "only_me"
+                            deliveryPreferences?.optString("respond_to_voices", "only_me") ?: "only_me",
+                            run {
+                                val arr = deliveryPreferences?.optJSONArray("preferred_languages")
+                                if (arr != null) (0 until arr.length()).map { arr.optString(it, "").trim() }.filter { it.isNotEmpty() }.joinToString(", ")
+                                else deliveryPreferences?.optString("preferred_languages", "") ?: ""
+                            }
                         )
                         onTemporalLoaded(
                             temporalContext?.optString("part_of_day", "...") ?: "...",

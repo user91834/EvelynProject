@@ -311,6 +311,8 @@ Channel preferences:
 - preferred_user_input: {prefs.get("preferred_user_input", "mixed")}
 - preferred_assistant_output: {prefs.get("preferred_assistant_output", "mixed")}
 - voice_affinity_score: {prefs.get("voice_affinity_score", 0)}
+
+Preferred conversation languages (reply in these when natural): {", ".join(u.get("delivery_preferences", {}).get("preferred_languages", []) or []) or "any"}
 - user_text_count: {prefs.get("user_text_count", 0)}
 - user_voice_count: {prefs.get("user_voice_count", 0)}
 - assistant_text_count: {prefs.get("assistant_text_count", 0)}

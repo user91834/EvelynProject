@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaPlayer
@@ -118,7 +119,10 @@ class VoiceCaptureForegroundService : Service() {
             return START_STICKY
         }
 
-        playbackAllowed = !(intent?.getBooleanExtra(EXTRA_APP_IN_FOREGROUND, false) ?: false)
+        // Only disable playback when we explicitly know the app is in foreground.
+        // When extra is missing (e.g. after process kill) allow playback so assistant speaks when app is inactive/closed.
+        playbackAllowed = intent?.hasExtra(EXTRA_APP_IN_FOREGROUND) != true ||
+            !intent.getBooleanExtra(EXTRA_APP_IN_FOREGROUND, false)
         baseUrl = intent?.getStringExtra(EXTRA_BASE_URL) ?: ""
         userId = intent?.getStringExtra(EXTRA_USER_ID) ?: ""
         speakerId = intent?.getStringExtra(EXTRA_SPEAKER_ID)?.takeIf { it.isNotBlank() }
@@ -429,7 +433,12 @@ class VoiceCaptureForegroundService : Service() {
 
             mediaPlayer?.release()
         } catch (_: Exception) {}
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
         val player = MediaPlayer().apply {
+            setAudioAttributes(attrs)
             setDataSource(url)
             setOnPreparedListener {
                 it.start()
